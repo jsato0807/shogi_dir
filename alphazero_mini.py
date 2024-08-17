@@ -15,8 +15,8 @@ class DobutsuShogiEnv:
         board[0, 1] = 3  # 真ん中にらいおん (lion)
         board[1, 1] = 4  # らいおんの前にひよこ (chick)
         board[3, 0] = -1  # 左にぞう (elephant)
-        board[3, 1] = -2  # 右にきりん (giraffe)
-        board[3, 2] = -3  # 真ん中にらいおん (lion)
+        board[3, 2] = -2  # 右にきりん (giraffe)
+        board[3, 1] = -3  # 真ん中にらいおん (lion)
         board[2, 1] = -4  # らいおんの前にひよこ (chick)
         print("リセット後のボード配置:\n", board)
         return board
@@ -84,9 +84,29 @@ class DobutsuShogiEnv:
         return self.board, winner
 
     def is_game_over(self):
-        game_over = self.board[0, :].any() == 3 or self.board[3, :].any() == -3
-        print(f"ゲーム終了判定: {game_over}")
-        return game_over
+        if self.board[0, :].any() == 3 or self.board[3, :].any() == -3:
+            print(f"ゲーム終了判定:トライ成功")
+            return True
+        
+        # 詰みのチェック
+        if self.is_checkmated(1) or self.is_checkmated(-1):
+            print(f"ゲーム終了判定:詰み")
+            return True
+        
+        return False
+
+    def is_checkmated(self, player):
+        lion_position = np.where(self.board == (3 if player == 1 else -3))
+        
+        if len(lion_position) == 0:
+            return False  # ライオンがボード上にいない場合はチェックメイトではない
+        
+
+        valid_moves = self.get_piece_moves(lion_position[0],lion_position[1], player)
+        if valid_moves:
+            return False  # 有効な移動がある場合はチェックメイトではない
+    
+        return True  # 有効な移動がない場合はチェックメイト
 
     def game_result(self):
         if self.board[0, :].any() == 3:
