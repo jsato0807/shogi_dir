@@ -1,5 +1,7 @@
 import random
+import numpy as np
 from tensorflow.keras import layers, models, optimizers
+from collections import defaultdict
 
 class State:
     def __init__(self, pieces=None, enemy_pieces=None, depth=0):
@@ -32,7 +34,7 @@ class State:
     
     def pieces_array(self):
         #プレイヤーごとのディアルネットワークの入力の２次元配列を取得
-        def pieces_array_of(self):
+        def pieces_array_of(pieces):
             table_list = []
 
             #ひよこ０、ぞう１、キリン２、ライオン３
@@ -45,7 +47,7 @@ class State:
 
             #ひよこの持ち駒４、像の持ち駒５、キリンの持ち駒６
             for j in range(1,4):
-                flag = 1 if self.pieces[11+j] > 0 else 0
+                flag = 1 if pieces[11+j] > 0 else 0
                 table = [flag] * 12
                 table_list.append(table)
             return table_list
@@ -192,124 +194,138 @@ class State:
     
     
 
-def random_action(state):
-    legal_actions = state.legal_actions()
-    print(f"legal_actions:", legal_actions)
-    return legal_actions[random.randint(0, len(legal_actions)-1)]
-
-
-def collect_random_play_data(state,num_games=10):
-    pieces_arrays, enemy_pieces_arrays = [], []
-    for _ in range(num_games):
-        while True:
-            if state.is_done():
-                break
+def build_model(input_shape, action_size):
+    inputs = layers.Input(shape=input_shape)
+    x = layers.Conv2D(64, (2, 2), padding="same", activation='relu')(inputs)
+    x = layers.Conv2D(128, (2, 2), padding="same" ,activation='relu')(x)
+    x = layers.Flatten()(x)
+    x = layers.Dense(256, activation='relu')(x)
     
-            pieces_array, enemy_pieces_array = state.pieces_array()
-            pieces_arrays.append(pieces_array)
-            enemy_pieces_arrays.append(enemy_pieces_array)
-
-            #次の状態の取得
-            state = state.next(random_action(state))
-
-            #文字列表示
-            print(state)
-            print()
-    return pieces_arrays, enemy_pieces_arrays
+    policy_head = layers.Dense(action_size, activation='softmax', name='policy_head')(x)
+    value_head = layers.Dense(1, activation='tanh', name='value_head')(x)
+    
+    model = models.Model(inputs=inputs, outputs=[policy_head, value_head])
+    model.compile(optimizer=optimizers.Adam(0.001),
+                  loss={'policy_head': 'categorical_crossentropy', 'value_head': 'mean_squared_error'})
+    return model
 
 
 class MCTS:
-    def __init__(self, model, game):
+    def __init__(self, model, num_simulations):
         self.model = model
-        self.game = game
-        self.tree = {}
-        print("MCTS初期化完了")
+        self.num_simulations = num_simulations
+        self.Q = defaultdict(lambda: defaultdict(float))  # 行動の価値
+        self.N = {}  # 行動の訪問回数
+        self.P = {}  # 行動の確率
 
-    def selection(self, state, player):
-        print("ノード選択中...")
-        if state.tostring() in self.tree:
-            return self.tree[state.tostring()]
+    def run(self, state):
+        for _ in range(self.num_simulations):
+            self._simulate(state)
+
+        actions = state.legal_actions()
+        counts = [self.N.get((state, action), 0) for action in actions]
+        best_action = actions[np.argmax(counts)]
+        return best_action
+
+    def _simulate(self, state):
+        if state.is_done():
+            return -1 if state.is_lose() else 0
+
+        # 選択フェーズ
+        next_state, action = self._select(state)
+        
+        # 評価フェーズ
+        value = self._evaluate(next_state)
+        
+        # 展開フェーズ
+        if (next_state, action) not in self.P:
+            self._expand(next_state)
+        
+        # 更新フェーズ
+        value = -self._simulate(next_state)
+        self._backpropagate(state, action, value)
+
+        return value
+
+    def _select(self, state):
+        """UCT (Upper Confidence Bound for Trees) を用いて次の行動を選択"""
+        actions = state.legal_actions()
+            # Ensure P[state] is a dict
+        if state not in self.P:
+            self.P[state] = {a: 0 for a in actions}
+
+        total_visits = sum(self.N.get((state, a), 0) for a in actions)
+        ucb_values = {
+            a: self.Q.get((state, a), 0) + self.P[state][a] * np.sqrt(total_visits) / (1 + self.N.get((state, a), 0))
+            for a in actions
+        }
+        best_action = max(ucb_values, key=ucb_values.get)
+        next_state = state.next(best_action)
+        return next_state, best_action
+
+    def _evaluate(self, state):
+        """ゲームの終局状況を評価"""
+        if state.is_done():
+            return -1 if state.is_lose() else 0
         return None
 
-    def expansion(self, state, player):
-        print("ノード拡張中...")
-        policy, value = self.model.predict(state.reshape(1, 4, 3, 1))
-        self.tree[state.tostring()] = (policy, value)
-        print(f"拡張結果 - ポリシー: {policy}, バリュー: {value}")
-        return policy, value
+    def _expand(self, state):
+        """ニューラルネットワークを用いてノードを展開"""
+        policy, value = self.model.predict(np.array([state.pieces_array()]))
+        policy = policy[0]
+        self.P[state] = {a: policy[a] for a in state.legal_actions()}
+        return value[0]
 
-    def simulation(self, state, player):
-        print("シミュレーション中...")
-        policy, value = self.expansion(state, player)
-        valid_actions = self.game.valid_moves(player)
-        action_probs = policy[0]
-        best_action = valid_actions[np.argmax(action_probs)]
-        print(f"シミュレーション結果 - 最良アクション: {best_action}, バリュー: {value}")
-        return best_action, value
+    def _backpropagate(self, state, action, value):
+        """バックプロパゲーションによって値と訪問回数を更新"""
+        self.Q[(state, action)] = self.Q.get((state, action), 0) + (value - self.Q.get((state, action), 0)) / (1 + self.N.get((state, action), 0))
+        self.N[(state, action)] = self.N.get((state, action), 0) + 1
 
-    def backpropagation(self, path, value):
-        print("バックプロパゲーション中...")
-        for state in reversed(path):
-            node = self.tree[state]
-            node[1] += value
-            node[2] += 1
-        print("バックプロパゲーション完了")
+def self_play(model, num_games, mcts_simulations):
+    memory = []
+    for _ in range(num_games):
+        state = State()
+        mcts = MCTS(model, mcts_simulations)
+        game_memory = []
 
-    def search(self, state, player):
-        print("探索中...")
-        path = []
-        node = self.selection(state, player)
-        if node is None:
-            policy, value = self.expansion(state, player)
-        else:
-            policy, value = node
-        action, value = self.simulation(state, player)
-        path.append(state.tostring())
-        self.backpropagation(path, value)
-        print(f"探索結果 - アクション: {action}")
-        return action
-
-    def select_action(self, state, player):
-        print("アクション選択中...")
-        action = self.search(state, player)
-        print(f"選択アクション: {action}")
-        return action
-
-def build_model():
-    print("モデルの構築...")
-    inputs = layers.Input(shape=(3,4,14))
-
-    x = layers.Conv2D(128, kernel_size=3, padding='same', activation='relu')(inputs)
-    x = layers.BatchNormalization()(x)
-    x = layers.Conv2D(128, kernel_size=3, padding='same', activation='relu')(x)
-    x = layers.BatchNormalization()(x)
-    x = layers.Flatten()(x)
-
-    policy = layers.Dense(204, activation='softmax')(x)  # 204アクションの確率分布
-    value = layers.Dense(1, activation='tanh')(x)  # 状態の勝率予測
-
-    model = models.Model(inputs=inputs, outputs=[policy, value])
-    model.compile(optimizer=optimizers.Adam(learning_rate=0.001),
-                  loss=['categorical_crossentropy', 'mean_squared_error'])
-    print("モデル構築完了")
-    return model
-
-def train(model, state, mcts, episodes):
-    print(f"モデルのトレーニングを開始 ({episodes} エピソード)...")
-    for episode in range(episodes):
-        state = state.reset()
-        player = 1
         while not state.is_done():
-            action = mcts.select_action(state, player)
-            pieces_arrays, enemy_pieces_arrays = state.next(action)
-            player *= -1
-    
-    model.fit(new_inputs, [new_policies, new_values], epochs=10, batch_size=32)
-    print("モデルのトレーニング完了")
+            action = mcts.run(state)
+            game_memory.append((state.pieces_array(), action))
+            state = state.next(action)
+
+        reward = -1 if state.is_lose() else 0
+        for state_data, action in game_memory:
+            action_prob = np.zeros(action_size)
+            action_prob[action] = 1
+            memory.append((state_data, action_prob, reward))
+            reward = -reward
+
+    return memory
+
+def train_model(model, memory, epochs=10, batch_size=64):
+    states, policies, rewards = zip(*memory)
+    states = np.array(states)
+    policies = np.array(policies)
+    rewards = np.array(rewards)
+    model.fit(states, [policies, rewards], epochs=epochs, batch_size=batch_size)
+
+def alpha_zero_training(model, num_iterations, num_games_per_iteration, mcts_simulations):
+    for i in range(num_iterations):
+        memory = self_play(model, num_games_per_iteration, mcts_simulations)
+        train_model(model, memory)
+        print(f"Iteration {i+1}/{num_iterations} completed")
+
+
 
 
 if __name__ == "__main__":
     state = State()
+    
+    input_shape = (2, 7, 12)  # (channels, height, width)
+    action_size = 12 * (8 + 3)  # (positions * directions + drop actions)
+    model = build_model(input_shape, action_size)
+    # トレーニングの実行
+    alpha_zero_training(model, num_iterations=10, num_games_per_iteration=100, mcts_simulations=50)
 
             
 
