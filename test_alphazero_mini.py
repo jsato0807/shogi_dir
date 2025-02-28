@@ -6,7 +6,7 @@ from collections import defaultdict
 class State:
     def __init__(self, pieces=None, enemy_pieces=None, depth=0):
         # 方向定数
-        self.dxy = ((0, 1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1))
+        self.dxy = ((0, -1), (1, -1), (1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1))
 
         #コマの配置
         self.pieces = pieces if pieces != None else [0] * (12 + 3)
@@ -17,7 +17,9 @@ class State:
         if pieces == None or enemy_pieces == None:
             self.pieces = [0,0,0,0,0,0,0,1,0,2,4,3,0,0,0]
             self.enemy_pieces = [0,0,0,0,0,0,0,1,0,2,4,3,0,0,0]
+
         
+        print(f"初期状態: プレイヤーのコマ {self.pieces}, 敵のコマ {self.enemy_pieces}, 深さ {self.depth}")
 
 
     def is_lose(self):
@@ -74,6 +76,7 @@ class State:
                 for capture in range(1, 4):
                     if self.pieces[11+capture] != 0:
                         actions.append(self.position_to_action(p, 8-1+capture))
+        print(f"合法手: {actions}")
         return actions
     
     #コマの移動時の合法手のリストの取得
@@ -82,7 +85,7 @@ class State:
 
         #コマの移動可能な方向
         piece_type = self.pieces[position_src]
-        if piece_type > 4: piece_type - 4
+        #if piece_type > 4: piece_type - 4
         directions = []
         if piece_type == 1: #ひよこ
             directions = [0]
@@ -155,9 +158,6 @@ class State:
         hzkr1 = ('', 'h', 'z', 'k', 'r')
 
 
-            # デバッグ用プリント
-        print("pieces0:", pieces0)
-        print("pieces1:", pieces1)
 
         #後手の持ち駒
         result = '['
@@ -192,7 +192,15 @@ class State:
 
         return result
     
-    
+
+
+def random_action(state):
+    legal_actions = state.legal_actions()
+    print(f"合法手: {legal_actions}")
+    action = legal_actions[random.randint(0, len(legal_actions)-1)]
+    print(f"選択された行動: {action}")
+    return action
+   
 
 def build_model(input_shape, action_size):
     inputs = layers.Input(shape=input_shape)
@@ -219,24 +227,28 @@ class MCTS:
         self.P = {}  # 行動の確率
 
     def run(self, state):
-        for _ in range(self.num_simulations):
+        print("MCTS 実行中...")
+        for i in range(self.num_simulations):
+            print(i)
             self._simulate(state)
 
         actions = state.legal_actions()
         counts = [self.N.get((state, action), 0) for action in actions]
         best_action = actions[np.argmax(counts)]
+        print(f"最良行動: {best_action}")
         return best_action
 
     def _simulate(self, state):
+        print(f"シミュレーション開始: {state}")
         if state.is_done():
             return -1 if state.is_lose() else 0
 
         # 選択フェーズ
         next_state, action = self._select(state)
-        
+
         # 評価フェーズ
         value = self._evaluate(next_state)
-        
+
         # 展開フェーズ
         if (next_state, action) not in self.P:
             self._expand(next_state)
@@ -245,6 +257,7 @@ class MCTS:
         value = -self._simulate(next_state)
         self._backpropagate(state, action, value)
 
+        print(f"シミュレーション結果: {value}")
         return value
 
     def _select(self, state):
@@ -281,8 +294,44 @@ class MCTS:
         self.Q[(state, action)] = self.Q.get((state, action), 0) + (value - self.Q.get((state, action), 0)) / (1 + self.N.get((state, action), 0))
         self.N[(state, action)] = self.N.get((state, action), 0) + 1
 
-def self_play(model, num_games, mcts_simulations):
+
+
+def self_play(model, num_games, mcts_simulations, initial_random_games=100, is_initial_iteration=False):
     memory = []
+
+    if is_initial_iteration:
+        print("初回イテレーション: ランダムプレイでデータ収集中...")
+        # 初回イテレーションでのみランダムプレイでデータを集める
+        for _ in range(initial_random_games):
+            state = State()
+            game_memory = []
+
+            while not state.is_done():
+                action = random_action(state)
+                game_memory.append((state.pieces_array(), action))
+                state = state.next(action)
+
+                print(state)
+                print()
+
+
+            reward = -1 if state.is_lose() else 0
+            for state_data, action in game_memory:
+                action_prob = np.zeros(action_size)
+                action_prob[action] = 1
+                memory.append((state_data, action_prob, reward))
+                reward = -reward
+
+        # モデルを学習させる
+        if len(memory) > 0:
+            states, action_probs, rewards = zip(*memory)
+            states = np.array(states)
+            action_probs = np.array(action_probs)
+            rewards = np.array(rewards)
+            model.fit(states, [action_probs, rewards], epochs=100, batch_size=64)
+
+    print("MCTS を使用したプレイ開始...")
+    # MCTSを用いたプレイ
     for _ in range(num_games):
         state = State()
         mcts = MCTS(model, mcts_simulations)
@@ -300,29 +349,32 @@ def self_play(model, num_games, mcts_simulations):
             memory.append((state_data, action_prob, reward))
             reward = -reward
 
+    print("自己対局終了")
     return memory
 
 def train_model(model, memory, epochs=10, batch_size=64):
+    print("モデルのトレーニング開始...")
     states, policies, rewards = zip(*memory)
     states = np.array(states)
     policies = np.array(policies)
     rewards = np.array(rewards)
     model.fit(states, [policies, rewards], epochs=epochs, batch_size=batch_size)
+    print("モデルのトレーニング完了")
 
 def alpha_zero_training(model, num_iterations, num_games_per_iteration, mcts_simulations):
     for i in range(num_iterations):
-        memory = self_play(model, num_games_per_iteration, mcts_simulations)
-        train_model(model, memory)
-        print(f"Iteration {i+1}/{num_iterations} completed")
-
+        print(f"イテレーション {i+1}/{num_iterations} 開始")
+        is_initial_iteration = (i == 0)
+        memory = self_play(model, num_games_per_iteration, mcts_simulations, initial_random_games=100, is_initial_iteration=is_initial_iteration)
+        if memory:
+            train_model(model, memory)
+        print(f"イテレーション {i+1}/{num_iterations} 完了")
 
 
 
 if __name__ == "__main__":
-    state = State()
-    
     input_shape = (2, 7, 12)  # (channels, height, width)
-    action_size = 12 * (8 + 3)  # (positions * directions + drop actions)
+    action_size = 11 * 11 + 11  # (positions * directions + drop actions)
     model = build_model(input_shape, action_size)
     # トレーニングの実行
     alpha_zero_training(model, num_iterations=10, num_games_per_iteration=100, mcts_simulations=50)
