@@ -103,7 +103,7 @@ class State:
 
         # 合法手の取得
         for direction in directions:
-            # 駒の移動元
+            # 駒の移動先
             x = position_src%3 + self.dxy[direction][0]
             y = int(position_src/3) + self.dxy[direction][1]
             p = x + y * 3
