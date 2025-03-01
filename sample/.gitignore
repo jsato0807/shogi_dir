@@ -1,0 +1,8 @@
+6_7_tictactoe/model/*.h5
+8_game/8_1_connect_four/model/*.h5
+8_game/8_2_reversi/model/*.h5
+8_game/8_3_simple_shogi/model/*.h5
+.DS_Store
+*.zip
+cifar-10-batches-py/
+cifar-10-python.tar.gz
