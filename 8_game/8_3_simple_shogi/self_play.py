@@ -75,7 +75,7 @@ def self_play():
     history = []
 
     # ベストプレイヤーのモデルの読み込み
-    model = load_model('./model/best.h5')
+    model = load_model('./model/best.h5',compile=False)
 
     # 複数回のゲームの実行
     for i in range(SP_GAME_COUNT):
