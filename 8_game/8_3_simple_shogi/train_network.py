@@ -34,7 +34,7 @@ def train_network():
     y_values = np.array(y_values)
 
     # ベストプレイヤーのモデルの読み込み
-    model = load_model('./model/best.h5')
+    model = load_model('./model/best.h5',compile=False)
 
     # モデルのコンパイル
     model.compile(loss=['categorical_crossentropy', 'mse'], optimizer='adam')

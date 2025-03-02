@@ -51,10 +51,10 @@ def update_best_player():
 # ネットワークの評価
 def evaluate_network():
     # 最新プレイヤーのモデルの読み込み
-    model0 = load_model('./model/latest.h5')
+    model0 = load_model('./model/latest.h5',compile=False)
 
     # ベストプレイヤーのモデルの読み込み
-    model1 = load_model('./model/best.h5')
+    model1 = load_model('./model/best.h5',compile=False)
 
     # PV MCTSで行動選択を行う関数の生成
     next_action0 = pv_mcts_action(model0, EN_TEMPERATURE)

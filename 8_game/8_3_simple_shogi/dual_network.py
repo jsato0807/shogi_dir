@@ -4,7 +4,8 @@
 
 # パッケージのインポート
 from tensorflow.keras.layers import Activation, Add, BatchNormalization, Conv2D, Dense, GlobalAveragePooling2D, Input
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import Model, load_model
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras import backend as K
 import os
@@ -36,9 +37,13 @@ def residual_block():
 
 # デュアルネットワークの作成
 def dual_network():
-    # モデル作成済みの場合は無処理
+    # モデル作成済みの場合はロードし、コンパイル
     if os.path.exists('./model/best.h5'):
-        return
+        model = load_model('./model/best.h5', compile=False)  # 既存のモデルをロード
+        model.compile(optimizer=Adam(learning_rate=0.00025),  # `lr` ではなく `learning_rate`
+                      loss={'pi': 'categorical_crossentropy', 'v': 'mean_squared_error'})
+        print("Model loaded and compiled successfully.")
+        return model  # ここでモデルを返すようにすると、学習時に使える
 
     # 入力層
     input = Input(shape=DN_INPUT_SHAPE)
@@ -65,6 +70,10 @@ def dual_network():
 
     # モデルの作成
     model = Model(inputs=input, outputs=[p,v])
+
+    # **モデルをコンパイル**
+    model.compile(optimizer=Adam(learning_rate=0.00025),  # `lr` ではなく `learning_rate`
+                  loss={'pi': 'categorical_crossentropy', 'v': 'mean_squared_error'})
 
     # モデルの保存
     os.makedirs('./model/', exist_ok=True) # フォルダがない時は生成
